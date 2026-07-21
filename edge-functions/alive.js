@@ -1,12 +1,15 @@
 /**
  * /alive 路由 - 返回只包含可连接站点的 TVBox 配置 JSON
  */
+import { getStore } from "@edgeone/pages-blob";
 import { fetchSource, mergeConfigs, resolveUrl } from '../lib/merge.js';
 import { jsonResponse } from '../lib/response.js';
 import { SOURCES, SPIDER, PAN_KEYWORDS } from '../lib/config.js';
 
 export async function onRequest({ request, params, env }) {
-  // 读取测试结果（从 KV）
+  const store = getStore("tvbox-data");
+
+  // 读取测试结果（从 Blob）
   let siteResults = {};
   let multiResults = {};
   let liveResults = {};
@@ -14,16 +17,17 @@ export async function onRequest({ request, params, env }) {
   let spiderResults = {};
 
   try {
-    const stored = await my_kv.get('site_results', { type: 'json' });
-    if (stored) siteResults = stored;
+    const raw = await store.get("site_results.json");
+    if (raw) siteResults = JSON.parse(raw);
   } catch (e) {}
   try {
-    const stored = await my_kv.get('multi_url_results', { type: 'json' });
-    if (stored) multiResults = stored;
+    const raw = await store.get("multi_url_results.json");
+    if (raw) multiResults = JSON.parse(raw);
   } catch (e) {}
   try {
-    const extra = await my_kv.get('extra_results', { type: 'json' });
-    if (extra) {
+    const raw = await store.get("extra_results.json");
+    if (raw) {
+      const extra = JSON.parse(raw);
       if (extra.spiderResults) spiderResults = extra.spiderResults;
       if (extra.liveResults) liveResults = extra.liveResults;
       if (extra.parseResults) parseResults = extra.parseResults;

@@ -1,7 +1,8 @@
 /**
  * 定时任务入口 - 每15分钟由 edgeone.json schedules 触发
- * 分批测试站点连通性，结果存入 KV
+ * 分批测试站点连通性，结果存入 Blob
  */
+import { getStore } from "@edgeone/pages-blob";
 import { fetchSource, mergeConfigs } from '../../../lib/merge.js';
 import { testSiteUrl } from '../../../lib/test.js';
 import { SOURCES } from '../../../lib/config.js';
@@ -59,6 +60,7 @@ function extractAllTestUrls(site) {
 }
 
 export async function onRequest({ request }) {
+  const store = getStore("tvbox-data");
   const sources = SOURCES;
   const fetchResults = await Promise.allSettled(sources.map(u => fetchSource(u)));
   const configs = [], configSources = [];
@@ -72,7 +74,7 @@ export async function onRequest({ request }) {
   const merged = mergeConfigs(configs, configSources);
   const sites = merged.sites || [];
 
-  // 读取 KV
+  // 读取 Blob
   let allResults = {};
   let multiResults = {};
   let spiderResults = {};
@@ -80,17 +82,18 @@ export async function onRequest({ request }) {
   let prevLiveResults = null;
   let prevParseResults = null;
 
-  try { const v = await my_kv.get('site_results', { type: 'json' }); if (v) allResults = v; } catch (e) {}
-  try { const v = await my_kv.get('multi_url_results', { type: 'json' }); if (v) multiResults = v; } catch (e) {}
+  try { const v = await store.get('site_results.json'); if (v) allResults = JSON.parse(v); } catch (e) {}
+  try { const v = await store.get('multi_url_results.json'); if (v) multiResults = JSON.parse(v); } catch (e) {}
   try {
-    const extra = await my_kv.get('extra_results', { type: 'json' });
-    if (extra) {
+    const raw = await store.get('extra_results.json');
+    if (raw) {
+      const extra = JSON.parse(raw);
       if (extra.spiderResults) spiderResults = extra.spiderResults;
       if (extra.liveResults) prevLiveResults = extra.liveResults;
       if (extra.parseResults) prevParseResults = extra.parseResults;
     }
   } catch (e) {}
-  try { const v = await my_kv.get('meta', { type: 'json' }); if (v) meta = v; } catch (e) {}
+  try { const v = await store.get('meta.json'); if (v) meta = JSON.parse(v); } catch (e) {}
 
   // Spider 测试
   const spiders = merged._spiders || [];
@@ -180,11 +183,11 @@ export async function onRequest({ request }) {
   meta.batchIndex = batchIndex + 1;
   meta.lastRun = { batch: currentBatch + 1, totalBatches, tested: batch.length, total: tasks.length, time: now };
 
-  // 写入 KV
-  await my_kv.put('site_results', JSON.stringify(allResults));
-  await my_kv.put('multi_url_results', JSON.stringify(multiResults));
-  await my_kv.put('meta', JSON.stringify(meta));
-  await my_kv.put('extra_results', JSON.stringify({ spiderResults, liveResults: liveReport, parseResults: parseReport }));
+  // 写入 Blob
+  await store.set('site_results.json', JSON.stringify(allResults));
+  await store.set('multi_url_results.json', JSON.stringify(multiResults));
+  await store.set('meta.json', JSON.stringify(meta));
+  await store.set('extra_results.json', JSON.stringify({ spiderResults, liveResults: liveReport, parseResults: parseReport }));
 
   return new Response(JSON.stringify({
     success: true,
