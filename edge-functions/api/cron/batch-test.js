@@ -120,7 +120,27 @@ export async function onRequest({ request }) {
     await store.set('site_results.json', JSON.stringify(allResults));
     await store.set('meta.json', JSON.stringify(meta));
 
-    const aliveCount = Object.values(allResults).filter(r => r.status === 'ok').length;
+    // 记录运行历史（保留最近 20 条）
+    let history = [];
+    try {
+      const raw = await store.get('run_history.json');
+      if (raw) history = JSON.parse(raw);
+    } catch (e) {}
+    
+    const runLog = {
+      time: now,
+      batch: currentBatch + 1,
+      totalBatches,
+      tested: batch.length,
+      totalTasks: tasks.length,
+      totalResults: Object.keys(allResults).length,
+      aliveCount,
+      sources: configs.length
+    };
+    history.unshift(runLog);
+    if (history.length > 20) history = history.slice(0, 20);
+    await store.set('run_history.json', JSON.stringify(history));
+
     console.log(`[cron] done. batch ${currentBatch + 1}/${totalBatches}, alive: ${aliveCount}/${Object.keys(allResults).length}`);
 
     return new Response(JSON.stringify({

@@ -50,6 +50,7 @@ export async function onRequest({ request }) {
     <div class="nav">
       <a href="/tvbox">📋 合并 JSON</a>
       <a href="/alive">✅ 存活配置</a>
+      <a href="/status">📊 运行状态</a>
       <a href="/test">🔍 源 API</a>
       <a href="/health">❤️ 健康</a>
     </div>
