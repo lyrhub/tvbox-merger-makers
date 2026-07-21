@@ -1,200 +1,141 @@
 /**
- * 定时任务入口 - 每15分钟由 edgeone.json schedules 触发
+ * 定时任务入口 - 每15分钟由 schedules 触发
  * 分批测试站点连通性，结果存入 Blob
  */
-import { getStore } from "@edgeone/pages-blob";
-import { fetchSource, mergeConfigs } from '../../../lib/merge.js';
-import { testSiteUrl } from '../../../lib/test.js';
-import { SOURCES } from '../../../lib/config.js';
+
+const SOURCES = [
+  'https://cdn.jsdelivr.net/gh/2hacc/TVBox@main/oktv.json',
+  'https://raw.githubusercontent.com/qist/tvbox/refs/heads/master/jsm.json',
+  'https://raw.githubusercontent.com/gaotianliuyun/gao/master/js.json',
+  'https://raw.liucn.cc/box/m.json'
+];
 
 const BATCH_SIZE = 20;
 
-function isUrl(str) {
-  return str && (str.startsWith('http://') || str.startsWith('https://'));
+function isUrl(str) { return str && (str.startsWith('http://') || str.startsWith('https://')); }
+
+async function fetchSource(url) {
+  const res = await fetch(url, { headers: { 'User-Agent': 'TVBox-Merger/1.0' } });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const text = await res.text();
+  return JSON.parse(text.replace(/^\uFEFF/, '').replace(/^\s*\/\/.*$/gm, '').trim());
 }
 
-function resolveRelative(path, baseUrl) {
-  if (!path || !baseUrl) return '';
-  if (isUrl(path)) return path;
-  if (!path.startsWith('./') && !path.startsWith('../')) return '';
-  const baseDir = baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1);
-  let resolved = path.startsWith('./') ? path.substring(2) : path;
-  return baseDir + resolved;
+async function testSiteUrl(url) {
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': 'TVBox-Merger/1.0' }, signal: controller.signal, redirect: 'follow' });
+    clearTimeout(timeout);
+    const latency = Date.now() - start;
+    if (res.ok) return { status: 'ok', latency, http_code: res.status };
+    return { status: 'http_error', latency, http_code: res.status };
+  } catch (e) {
+    return { status: e.name === 'AbortError' ? 'timeout' : 'network_error', latency: Date.now() - start, error: e.message?.substring(0, 60) };
+  }
 }
 
 function extractTestUrl(site) {
-  const baseUrl = site._baseUrl || '';
-  if (site.api && isUrl(site.api) && !site.api.includes('drpy')) return { url: site.api, source: 'api' };
-  if (site.api && site.api.startsWith('./') && baseUrl && !site.api.includes('drpy')) {
-    const resolved = resolveRelative(site.api, baseUrl);
-    if (resolved) return { url: resolved, source: 'api' };
-  }
-  if (site.ext && typeof site.ext === 'string') {
-    if (isUrl(site.ext)) return { url: site.ext, source: 'ext' };
-    if (site.ext.startsWith('./') && baseUrl) {
-      const resolved = resolveRelative(site.ext.split('\n')[0], baseUrl);
-      if (resolved) return { url: resolved, source: 'ext' };
-    }
-    const urlMatch = site.ext.match(/https?:\/\/[^\s$]+/);
-    if (urlMatch) return { url: urlMatch[0].replace(/\$+$/, '').replace(/\/$/, ''), source: 'ext' };
-  }
+  if (site.api && isUrl(site.api) && !site.api.includes('drpy')) return site.api;
+  if (site.ext && typeof site.ext === 'string' && isUrl(site.ext)) return site.ext;
   if (site.ext && typeof site.ext === 'object') {
-    if (site.ext.siteUrl && isUrl(site.ext.siteUrl)) return { url: site.ext.siteUrl, source: 'ext.siteUrl' };
-    if (Array.isArray(site.ext.site) && site.ext.site.length > 0 && isUrl(site.ext.site[0])) return { url: site.ext.site[0], source: 'ext.site[]' };
+    if (site.ext.siteUrl && isUrl(site.ext.siteUrl)) return site.ext.siteUrl;
+    if (Array.isArray(site.ext.site) && site.ext.site.length > 0 && isUrl(site.ext.site[0])) return site.ext.site[0];
   }
-  return { url: '', source: '' };
-}
-
-function extractAllTestUrls(site) {
-  if (site.ext && typeof site.ext === 'object' && Array.isArray(site.ext.site)) {
-    const urls = site.ext.site.filter(u => isUrl(u));
-    if (urls.length > 0) return { urls, source: 'ext.site[]', format: 'array' };
-  }
-  if (site.ext && typeof site.ext === 'string' && site.ext.includes(',')) {
-    const parts = site.ext.split(',').map(s => s.trim()).filter(u => isUrl(u));
-    if (parts.length > 1) return { urls: parts, source: 'ext(comma)', format: 'comma' };
-  }
-  const { url, source } = extractTestUrl(site);
-  if (url) return { urls: [url], source, format: 'single' };
-  return { urls: [], source: '', format: '' };
+  return '';
 }
 
 export async function onRequest({ request }) {
-  const store = getStore("tvbox-data");
-  const sources = SOURCES;
-  const fetchResults = await Promise.allSettled(sources.map(u => fetchSource(u)));
-  const configs = [], configSources = [];
-  fetchResults.forEach((r, i) => {
-    if (r.status === 'fulfilled' && r.value) { configs.push(r.value); configSources.push(sources[i]); }
-  });
-  if (configs.length === 0) {
-    return new Response(JSON.stringify({ error: 'all sources failed' }), { status: 502 });
-  }
-
-  const merged = mergeConfigs(configs, configSources);
-  const sites = merged.sites || [];
-
-  // 读取 Blob
-  let allResults = {};
-  let multiResults = {};
-  let spiderResults = {};
-  let meta = { batchIndex: 0 };
-  let prevLiveResults = null;
-  let prevParseResults = null;
-
-  try { const v = await store.get('site_results.json'); if (v) allResults = JSON.parse(v); } catch (e) {}
-  try { const v = await store.get('multi_url_results.json'); if (v) multiResults = JSON.parse(v); } catch (e) {}
+  console.log('[cron] batch-test triggered');
   try {
-    const raw = await store.get('extra_results.json');
-    if (raw) {
-      const extra = JSON.parse(raw);
-      if (extra.spiderResults) spiderResults = extra.spiderResults;
-      if (extra.liveResults) prevLiveResults = extra.liveResults;
-      if (extra.parseResults) prevParseResults = extra.parseResults;
+    const { getStore } = await import("@edgeone/pages-blob");
+    const store = getStore("tvbox-data");
+
+    // 拉取源
+    const fetchResults = await Promise.allSettled(SOURCES.map(u => fetchSource(u)));
+    const configs = [];
+    fetchResults.forEach((r) => { if (r.status === 'fulfilled' && r.value) configs.push(r.value); });
+
+    if (configs.length === 0) {
+      console.error('[cron] all sources failed');
+      return new Response(JSON.stringify({ error: 'all sources failed' }), { status: 502 });
     }
-  } catch (e) {}
-  try { const v = await store.get('meta.json'); if (v) meta = JSON.parse(v); } catch (e) {}
 
-  // Spider 测试
-  const spiders = merged._spiders || [];
-  if (spiders.length > 0) {
-    const spiderTests = await Promise.allSettled(spiders.map(s => testSiteUrl(s.split(';')[0])));
-    const now = new Date().toISOString();
-    spiders.forEach((spider, i) => {
-      const result = spiderTests[i].status === 'fulfilled' ? spiderTests[i].value : { status: 'error' };
-      spiderResults[spider] = { ...result, tested_at: now, url: spider.split(';')[0] };
-      allResults['__spider_' + i + '__'] = { ...result, tested_at: now, name: '🕷 Spider ' + i, type: 'jar', testUrl: spider.split(';')[0] };
-    });
-  }
+    console.log(`[cron] fetched ${configs.length} sources`);
 
-  // 站点批量测试
-  const batchIndex = meta.batchIndex || 0;
-  const tasks = [];
-  const noUrlSites = [];
-
-  for (const site of sites) {
-    const { urls, source, format } = extractAllTestUrls(site);
-    if (urls.length === 0) {
-      noUrlSites.push(site);
-    } else if (urls.length === 1) {
-      tasks.push({ key: site.key, name: site.name, type: site.type, api: site.api, testUrl: urls[0], urlSource: source, isMulti: false, sourceName: site._source || '' });
-    } else {
-      for (const url of urls) {
-        tasks.push({ key: site.key, name: site.name, type: site.type, api: site.api, testUrl: url, urlSource: source, isMulti: true, format, sourceName: site._source || '' });
+    // 合并站点
+    const allSites = [];
+    const seenKeys = new Set();
+    for (const config of configs) {
+      if (Array.isArray(config.sites)) {
+        for (const site of config.sites) {
+          const key = site.key || site.name;
+          if (!key || seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          allSites.push(site);
+        }
       }
     }
+
+    // 读取已有结果和 meta
+    let allResults = {};
+    let meta = { batchIndex: 0 };
+    try {
+      const raw = await store.get('site_results.json');
+      if (raw) allResults = JSON.parse(raw);
+    } catch (e) { console.log('[cron] no existing results'); }
+    try {
+      const raw = await store.get('meta.json');
+      if (raw) meta = JSON.parse(raw);
+    } catch (e) {}
+
+    // 构建测试任务
+    const tasks = [];
+    for (const site of allSites) {
+      const url = extractTestUrl(site);
+      if (url) tasks.push({ key: site.key || site.name, name: site.name, testUrl: url });
+    }
+
+    const totalBatches = Math.ceil(tasks.length / BATCH_SIZE) || 1;
+    const currentBatch = (meta.batchIndex || 0) % totalBatches;
+    const batch = tasks.slice(currentBatch * BATCH_SIZE, (currentBatch + 1) * BATCH_SIZE);
+
+    console.log(`[cron] testing batch ${currentBatch + 1}/${totalBatches}, ${batch.length} tasks`);
+
+    // 并发测试
+    const testResults = await Promise.allSettled(batch.map(t => testSiteUrl(t.testUrl)));
+    const now = new Date().toISOString();
+
+    batch.forEach((task, i) => {
+      const result = testResults[i].status === 'fulfilled' ? testResults[i].value : { status: 'error' };
+      allResults[task.key] = { ...result, tested_at: now, name: task.name, testUrl: task.testUrl };
+    });
+
+    // 更新 meta
+    meta.batchIndex = (meta.batchIndex || 0) + 1;
+    meta.lastRun = { batch: currentBatch + 1, totalBatches, tested: batch.length, total: tasks.length, time: now };
+
+    // 写入 Blob
+    await store.set('site_results.json', JSON.stringify(allResults));
+    await store.set('meta.json', JSON.stringify(meta));
+
+    const aliveCount = Object.values(allResults).filter(r => r.status === 'ok').length;
+    console.log(`[cron] done. batch ${currentBatch + 1}/${totalBatches}, alive: ${aliveCount}/${Object.keys(allResults).length}`);
+
+    return new Response(JSON.stringify({
+      success: true,
+      batch: currentBatch + 1,
+      totalBatches,
+      tested: batch.length,
+      totalTasks: tasks.length,
+      totalResults: Object.keys(allResults).length,
+      aliveCount
+    }), { headers: { 'Content-Type': 'application/json' } });
+  } catch (err) {
+    console.error('[cron] error:', err.message, err.stack);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500, headers: { 'Content-Type': 'application/json' }
+    });
   }
-
-  const totalBatches = Math.ceil(tasks.length / BATCH_SIZE) || 1;
-  const currentBatch = batchIndex % totalBatches;
-  const start = currentBatch * BATCH_SIZE;
-  const batch = tasks.slice(start, start + BATCH_SIZE);
-
-  const testResults = await Promise.allSettled(batch.map(t => testSiteUrl(t.testUrl)));
-  const now = new Date().toISOString();
-
-  batch.forEach((task, i) => {
-    const result = testResults[i].status === 'fulfilled' ? testResults[i].value : { status: 'error' };
-    if (task.isMulti) {
-      if (!multiResults[task.key]) multiResults[task.key] = { name: task.name, format: task.format, urls: {} };
-      multiResults[task.key].urls[task.testUrl] = { ...result, tested_at: now };
-      const urlStatuses = Object.values(multiResults[task.key].urls);
-      const hasOk = urlStatuses.some(u => u.status === 'ok');
-      allResults[task.key] = { status: hasOk ? 'ok' : result.status, latency: result.latency, tested_at: now, name: task.name, sourceName: task.sourceName, isMulti: true, totalUrls: Object.keys(multiResults[task.key].urls).length, aliveUrls: urlStatuses.filter(u => u.status === 'ok').length };
-    } else {
-      allResults[task.key] = { ...result, tested_at: now, name: task.name, testUrl: task.testUrl, urlSource: task.urlSource, sourceName: task.sourceName };
-    }
-  });
-
-  noUrlSites.forEach(site => {
-    const key = site.key || site.name;
-    if (!allResults[key]) {
-      allResults[key] = { status: 'skip', reason: '无可测试URL', tested_at: now, name: site.name, sourceName: site._source || '' };
-    }
-  });
-
-  // 测试 lives 和 parses（交替执行）
-  let liveReport = prevLiveResults;
-  let parseReport = prevParseResults;
-
-  if (currentBatch % 2 === 0) {
-    const lives = (merged.lives || []).filter(l => l.url && isUrl(l.url)).slice(0, 10);
-    if (lives.length > 0) {
-      const liveTests = await Promise.allSettled(lives.map(l => testSiteUrl(l.url)));
-      liveReport = {};
-      lives.forEach((live, i) => {
-        const result = liveTests[i].status === 'fulfilled' ? liveTests[i].value : { status: 'error' };
-        liveReport[live.name + '|' + live.url] = { ...result, tested_at: now };
-      });
-    }
-
-    const parses = (merged.parses || []).filter(p => p.url && isUrl(p.url)).slice(0, 10);
-    if (parses.length > 0) {
-      const parseTests = await Promise.allSettled(parses.map(p => testSiteUrl(p.url)));
-      parseReport = {};
-      parses.forEach((parse, i) => {
-        const result = parseTests[i].status === 'fulfilled' ? parseTests[i].value : { status: 'error' };
-        parseReport[parse.name || parse.url] = { ...result, tested_at: now };
-      });
-    }
-  }
-
-  // 更新 meta
-  meta.batchIndex = batchIndex + 1;
-  meta.lastRun = { batch: currentBatch + 1, totalBatches, tested: batch.length, total: tasks.length, time: now };
-
-  // 写入 Blob
-  await store.set('site_results.json', JSON.stringify(allResults));
-  await store.set('multi_url_results.json', JSON.stringify(multiResults));
-  await store.set('meta.json', JSON.stringify(meta));
-  await store.set('extra_results.json', JSON.stringify({ spiderResults, liveResults: liveReport, parseResults: parseReport }));
-
-  return new Response(JSON.stringify({
-    success: true,
-    batch: currentBatch + 1,
-    totalBatches,
-    tested: batch.length,
-    total: tasks.length,
-    aliveCount: Object.values(allResults).filter(r => r.status === 'ok' && !r.name?.startsWith('__spider')).length
-  }), { headers: { 'Content-Type': 'application/json' } });
 }
