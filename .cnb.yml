@@ -1,5 +1,5 @@
 # CNB Pipeline: push to master 自动部署到 EdgeOne Makers
-main:
+master:
   push:
     - imports: https://cnb.cool/liwhu/env/-/blob/main/envs.yml
       stages:
