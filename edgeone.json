@@ -1,0 +1,13 @@
+{
+  "name": "tvbox-merger-makers",
+  "outputDirectory": ".",
+  "schedules": [
+    {
+      "name": "batch-test",
+      "cron": "*/15 * * * *",
+      "path": "/api/cron/batch-test",
+      "method": "POST",
+      "timezone": "Asia/Shanghai"
+    }
+  ]
+}
