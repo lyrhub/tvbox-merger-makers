@@ -1,4 +1,6 @@
-# CNB Pipeline: push to master 自动部署到 EdgeOne Makers
+# CNB Pipeline
+# 1. push to master 自动部署到 EdgeOne Makers
+# 2. 每15分钟定时触发站点测试
 master:
   push:
     - imports: https://cnb.cool/liwhu/env/-/blob/main/envs.yml
@@ -6,3 +8,13 @@ master:
         - name: Deploy to EdgeOne Makers
           image: node:20
           script: npx edgeone makers deploy . -n tvbox -t $EDGEONE_API_TOKEN
+
+  "crontab: */15 * * * *":
+    - imports: https://cnb.cool/liwhu/env/-/blob/main/envs.yml
+      stages:
+        - name: Trigger batch test
+          image: node:20
+          script: |
+            curl -s -X POST "https://tv.li.tw.kg/api/cron/batch-test" \
+              -H "Content-Type: application/json" \
+              && echo " -> batch test triggered"
