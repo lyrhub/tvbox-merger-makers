@@ -6,27 +6,118 @@
   <title>TVBox Merger - EdgeOne Makers</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-    .container { text-align: center; padding: 40px; }
-    h1 { font-size: 32px; margin-bottom: 12px; }
-    .subtitle { color: #8b949e; margin-bottom: 30px; }
-    .links { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
-    .links a { color: #58a6ff; text-decoration: none; background: #161b22; border: 1px solid #30363d; padding: 12px 24px; border-radius: 8px; transition: all 0.2s; }
-    .links a:hover { background: #21262d; border-color: #58a6ff; }
-    .badge { margin-top: 30px; color: #484f58; font-size: 12px; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; min-height: 100vh; padding: 20px; }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { text-align: center; font-size: 28px; margin-bottom: 8px; }
+    .subtitle { text-align: center; color: #8b949e; margin-bottom: 24px; font-size: 14px; }
+    .nav { display: flex; gap: 12px; justify-content: center; margin-bottom: 24px; flex-wrap: wrap; }
+    .nav a { color: #58a6ff; text-decoration: none; background: #161b22; border: 1px solid #30363d; padding: 10px 20px; border-radius: 8px; font-size: 14px; transition: all 0.2s; }
+    .nav a:hover { background: #21262d; border-color: #58a6ff; }
+    .summary { display: flex; gap: 16px; justify-content: center; margin-bottom: 24px; flex-wrap: wrap; }
+    .stat { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 16px 24px; text-align: center; min-width: 100px; }
+    .stat-value { font-size: 28px; font-weight: bold; }
+    .stat-label { font-size: 12px; color: #8b949e; margin-top: 4px; }
+    .stat-ok .stat-value { color: #3fb950; }
+    .stat-fail .stat-value { color: #f85149; }
+    .stat-total .stat-value { color: #58a6ff; }
+    .info-bar { text-align: center; color: #8b949e; font-size: 13px; margin-bottom: 20px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
+    .card:hover { border-color: #58a6ff; }
+    .card-header { display: flex; align-items: center; padding: 14px 18px; gap: 12px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .dot-ok { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.4); }
+    .dot-fail { background: #f85149; box-shadow: 0 0 6px rgba(248,81,73,0.4); }
+    .card-url { flex: 1; font-size: 13px; word-break: break-all; font-family: "SF Mono", Monaco, monospace; color: #8b949e; }
+    .card-latency { font-size: 13px; color: #8b949e; white-space: nowrap; }
+    .card-details { padding: 0 18px 14px 40px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .tag { background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #8b949e; }
+    .tag-value { color: #e1e4e8; font-weight: 500; }
+    .error-msg { color: #f85149; font-size: 13px; padding: 0 18px 14px 40px; }
+    .loading { text-align: center; padding: 40px; color: #8b949e; }
+    .section-title { font-size: 18px; margin: 30px 0 14px; padding-left: 4px; }
+    table { width: 100%; border-collapse: collapse; background: #161b22; border-radius: 12px; overflow: hidden; border: 1px solid #30363d; margin-bottom: 20px; }
+    th { background: #21262d; padding: 10px 14px; text-align: left; font-size: 12px; color: #8b949e; font-weight: 500; }
+    td { padding: 8px 14px; border-top: 1px solid #21262d; font-size: 13px; }
+    tr:hover td { background: #1c2128; }
+    .latency-fast { color: #3fb950; }
+    .latency-mid { color: #d29922; }
+    .latency-slow { color: #f85149; }
+    .badge { text-align: center; color: #484f58; font-size: 12px; margin-top: 30px; }
+    @media (max-width: 600px) { .summary { gap: 8px; } .stat { padding: 12px 16px; min-width: 80px; } .stat-value { font-size: 22px; } }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>📡 TVBox Merger</h1>
-    <p class="subtitle">多源合并 + 自动存活检测 | EdgeOne Makers 版</p>
-    <div class="links">
-      <a href="/tvbox">📋 合并配置 JSON</a>
+    <p class="subtitle">多源合并 + 自动存活检测 | EdgeOne Makers</p>
+    <div class="nav">
+      <a href="/tvbox">📋 合并 JSON</a>
       <a href="/alive">✅ 存活配置</a>
-      <a href="/test">🔍 源测试</a>
-      <a href="/health">❤️ 健康检查</a>
+      <a href="/test">🔍 源 API</a>
+      <a href="/health">❤️ 健康</a>
     </div>
-    <p class="badge">Powered by EdgeOne Makers | Cron 每15分钟自动测试</p>
+
+    <div id="status-section">
+      <div class="loading" id="loading">⏳ 正在加载源状态...</div>
+    </div>
+
+    <p class="badge">Powered by EdgeOne Makers | Cron 每15分钟自动检测</p>
   </div>
+
+  <script>
+    async function loadStatus() {
+      const section = document.getElementById('status-section');
+      try {
+        const res = await fetch('/test');
+        const data = await res.json();
+        const { summary, results } = data;
+
+        let html = `
+          <div class="summary">
+            <div class="stat stat-total"><div class="stat-value">${summary.total}</div><div class="stat-label">总源数</div></div>
+            <div class="stat stat-ok"><div class="stat-value">${summary.available}</div><div class="stat-label">可用</div></div>
+            <div class="stat stat-fail"><div class="stat-value">${summary.failed}</div><div class="stat-label">异常</div></div>
+          </div>
+          <div class="info-bar">⏱ 检测时间: ${new Date(summary.tested_at).toLocaleString('zh-CN')} | 每15分钟自动测试一批站点</div>
+          <h3 class="section-title">📊 源连接状态</h3>
+        `;
+
+        for (const r of results) {
+          const isOk = r.status === 'ok';
+          const dotClass = isOk ? 'dot-ok' : 'dot-fail';
+          const latency = r.latency != null ? r.latency + 'ms' : '--';
+          
+          let details = '';
+          if (isOk) {
+            details = `<div class="card-details">
+              ${r.sites_count ? `<span class="tag">站点 <span class="tag-value">${r.sites_count}</span></span>` : ''}
+              ${r.lives_count ? `<span class="tag">直播 <span class="tag-value">${r.lives_count}</span></span>` : ''}
+              ${r.parses_count ? `<span class="tag">解析 <span class="tag-value">${r.parses_count}</span></span>` : ''}
+              ${r.has_spider ? '<span class="tag">Spider <span class="tag-value">✓</span></span>' : ''}
+            </div>`;
+          } else {
+            details = `<div class="error-msg">❌ ${r.error || r.status}</div>`;
+          }
+
+          html += `
+            <div class="card">
+              <div class="card-header">
+                <span class="dot ${dotClass}"></span>
+                <span class="card-url">${r.url}</span>
+                <span class="card-latency">${latency}</span>
+              </div>
+              ${details}
+            </div>
+          `;
+        }
+
+        section.innerHTML = html;
+      } catch (e) {
+        section.innerHTML = `<div class="info-bar" style="color:#f85149">加载失败: ${e.message}</div>`;
+      }
+    }
+
+    loadStatus();
+  </script>
 </body>
 </html>
