@@ -1,0 +1,8 @@
+# CNB Pipeline: push to master 自动部署到 EdgeOne Makers
+main:
+  push:
+    - imports: https://cnb.cool/liwhu/env/-/blob/main/envs.yml
+      stages:
+        - name: Deploy to EdgeOne Makers
+          image: node:20
+          script: npx edgeone makers deploy . -n tvbox -t $EDGEONE_API_TOKEN
