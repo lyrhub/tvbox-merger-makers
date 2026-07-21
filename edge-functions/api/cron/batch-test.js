@@ -120,6 +120,8 @@ export async function onRequest({ request }) {
     await store.set('site_results.json', JSON.stringify(allResults));
     await store.set('meta.json', JSON.stringify(meta));
 
+    const aliveCount = Object.values(allResults).filter(r => r.status === 'ok').length;
+
     // 记录运行历史（保留最近 20 条）
     let history = [];
     try {
