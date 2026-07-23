@@ -14,6 +14,14 @@ const BATCH_SIZE = 20;
 
 function isUrl(str) { return str && (str.startsWith('http://') || str.startsWith('https://')); }
 
+function resolveUrl(path, baseUrl) {
+  if (!path || !baseUrl) return '';
+  if (isUrl(path)) return path;
+  if (!path.startsWith('./')) return '';
+  const baseDir = baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1);
+  return baseDir + path.substring(2);
+}
+
 async function fetchSource(url) {
   const res = await fetch(url, { headers: { 'User-Agent': 'TVBox-Merger/1.0' } });
   if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -36,14 +44,67 @@ async function testSiteUrl(url) {
   }
 }
 
-function extractTestUrl(site) {
-  if (site.api && isUrl(site.api) && !site.api.includes('drpy')) return site.api;
-  if (site.ext && typeof site.ext === 'string' && isUrl(site.ext)) return site.ext;
-  if (site.ext && typeof site.ext === 'object') {
-    if (site.ext.siteUrl && isUrl(site.ext.siteUrl)) return site.ext.siteUrl;
-    if (Array.isArray(site.ext.site) && site.ext.site.length > 0 && isUrl(site.ext.site[0])) return site.ext.site[0];
+/**
+ * 从 drpy 规则 JS 文件中提取 host
+ */
+async function fetchRuleHost(ruleUrl) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(ruleUrl, { headers: { 'User-Agent': 'TVBox-Merger/1.0' }, signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return '';
+    const text = await res.text();
+    // 匹配 host = "xxx" 模式
+    const patterns = [
+      /(?:var|let|const|)\s*host\s*[:=]\s*['"`]([^'"`\s]+)['"`]/,
+      /['"]host['"]\s*[:=]\s*['"`]([^'"`\s]+)['"`]/,
+    ];
+    for (const pattern of patterns) {
+      const m = text.match(pattern);
+      if (m && m[1] && isUrl(m[1])) return m[1].replace(/\/+$/, '');
+    }
+    // 匹配 homeUrl/siteUrl/baseUrl
+    const urlPatterns = [
+      /(?:var|let|const|)\s*(?:homeUrl|siteUrl|baseUrl)\s*[:=]\s*['"`]([^'"`\s]+)['"`]/,
+    ];
+    for (const pattern of urlPatterns) {
+      const m = text.match(pattern);
+      if (m && m[1] && isUrl(m[1])) return m[1].replace(/\/+$/, '');
+    }
+    return '';
+  } catch (e) { return ''; }
+}
+
+function isDrpySite(site) {
+  const api = site.api || '';
+  return api.includes('drpy') || api.includes('drpy2');
+}
+
+function extractTestUrl(site, baseUrl) {
+  // 非 drpy 站点：直接用 api
+  if (site.api && isUrl(site.api) && !isDrpySite(site)) return { url: site.api, type: 'direct' };
+  // api 相对路径（非 drpy）
+  if (site.api && site.api.startsWith('./') && baseUrl && !isDrpySite(site)) {
+    const resolved = resolveUrl(site.api, baseUrl);
+    if (resolved) return { url: resolved, type: 'direct' };
   }
-  return '';
+  // ext 字符串
+  if (site.ext && typeof site.ext === 'string') {
+    if (isUrl(site.ext)) return { url: site.ext, type: isDrpySite(site) ? 'drpy_rule' : 'direct' };
+    if (site.ext.startsWith('./') && baseUrl) {
+      const resolved = resolveUrl(site.ext.split('\n')[0], baseUrl);
+      if (resolved) return { url: resolved, type: isDrpySite(site) ? 'drpy_rule' : 'direct' };
+    }
+    const urlMatch = site.ext.match(/https?:\/\/[^\s$]+/);
+    if (urlMatch) return { url: urlMatch[0].replace(/\$+$/, '').replace(/\/$/, ''), type: isDrpySite(site) ? 'drpy_rule' : 'direct' };
+  }
+  // ext 对象
+  if (site.ext && typeof site.ext === 'object') {
+    if (site.ext.siteUrl && isUrl(site.ext.siteUrl)) return { url: site.ext.siteUrl, type: 'direct' };
+    if (Array.isArray(site.ext.site) && site.ext.site.length > 0 && isUrl(site.ext.site[0])) return { url: site.ext.site[0], type: 'direct' };
+  }
+  return { url: '', type: '' };
 }
 
 export async function onRequest({ request }) {
@@ -64,16 +125,19 @@ export async function onRequest({ request }) {
 
     console.log(`[cron] fetched ${configs.length} sources`);
 
-    // 合并站点
+    // 合并站点（保留 baseUrl 用于解析相对路径）
     const allSites = [];
     const seenKeys = new Set();
-    for (const config of configs) {
+    const sourceUrls = [];
+    for (let ci = 0; ci < configs.length; ci++) {
+      const config = configs[ci];
+      const baseUrl = SOURCES[ci] || '';
       if (Array.isArray(config.sites)) {
         for (const site of config.sites) {
           const key = site.key || site.name;
           if (!key || seenKeys.has(key)) continue;
           seenKeys.add(key);
-          allSites.push(site);
+          allSites.push({ ...site, _baseUrl: baseUrl });
         }
       }
     }
@@ -90,11 +154,33 @@ export async function onRequest({ request }) {
       if (raw) meta = JSON.parse(raw);
     } catch (e) {}
 
-    // 构建测试任务
+    // 构建测试任务（包含 drpy 规则站点）
     const tasks = [];
+    const drpyTasks = []; // 需要额外下载规则文件的
     for (const site of allSites) {
-      const url = extractTestUrl(site);
-      if (url) tasks.push({ key: site.key || site.name, name: site.name, testUrl: url });
+      const { url, type } = extractTestUrl(site, site._baseUrl);
+      if (!url) continue;
+      const key = site.key || site.name;
+      if (type === 'drpy_rule') {
+        drpyTasks.push({ key, name: site.name, ruleUrl: url });
+      } else {
+        tasks.push({ key, name: site.name, testUrl: url });
+      }
+    }
+
+    // 处理 drpy 站点：每批最多解析 5 个规则文件（避免超时）
+    const drpyBatchIndex = (meta.drpyBatchIndex || 0) % (Math.ceil(drpyTasks.length / 5) || 1);
+    const drpyBatch = drpyTasks.slice(drpyBatchIndex * 5, (drpyBatchIndex + 1) * 5);
+    
+    if (drpyBatch.length > 0) {
+      const hostResults = await Promise.allSettled(drpyBatch.map(t => fetchRuleHost(t.ruleUrl)));
+      for (let i = 0; i < drpyBatch.length; i++) {
+        const host = hostResults[i].status === 'fulfilled' ? hostResults[i].value : '';
+        if (host) {
+          tasks.push({ key: drpyBatch[i].key, name: drpyBatch[i].name, testUrl: host });
+        }
+      }
+      meta.drpyBatchIndex = (meta.drpyBatchIndex || 0) + 1;
     }
 
     const totalBatches = Math.ceil(tasks.length / BATCH_SIZE) || 1;
